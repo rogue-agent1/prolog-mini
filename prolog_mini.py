@@ -1,56 +1,66 @@
 #!/usr/bin/env python3
-"""Minimal Prolog interpreter (unification + backtracking)."""
-import re,sys
-def parse_term(s):
-    s=s.strip()
-    m=re.match(r"(\w+)\((.+)\)",s)
-    if m: return (m.group(1),[parse_term(a) for a in split_args(m.group(2))])
-    if s[0].isupper() or s=="_": return ("var",s)
-    return ("atom",s)
-def split_args(s):
-    depth=0; parts=[]; cur=""
-    for c in s:
-        if c=="(": depth+=1
-        elif c==")": depth-=1
-        if c=="," and depth==0: parts.append(cur); cur=""
-        else: cur+=c
-    if cur: parts.append(cur)
-    return parts
-def unify(t1,t2,subst):
-    t1=deref(t1,subst); t2=deref(t2,subst)
-    if t1==t2: return subst
-    if t1[0]=="var": return {**subst,t1[1]:t2}
-    if t2[0]=="var": return {**subst,t2[1]:t1}
-    if t1[0]==t2[0] and isinstance(t1[1],list) and isinstance(t2[1],list) and len(t1[1])==len(t2[1]):
-        for a,b in zip(t1[1],t2[1]):
+"""prolog_mini - Minimal Prolog interpreter with unification."""
+import sys, copy
+class Atom:
+    def __init__(self, name): self.name=name
+    def __repr__(self): return self.name
+    def __eq__(self, o): return isinstance(o,Atom) and self.name==o.name
+    def __hash__(self): return hash(self.name)
+class Var:
+    def __init__(self, name): self.name=name
+    def __repr__(self): return self.name
+class Compound:
+    def __init__(self, functor, args): self.functor=functor; self.args=args
+    def __repr__(self): return f"{self.functor}({','.join(map(str,self.args))})"
+class Clause:
+    def __init__(self, head, body=None): self.head=head; self.body=body or []
+def unify(x, y, subst):
+    if subst is None: return None
+    x=walk(x,subst); y=walk(y,subst)
+    if isinstance(x,Var): subst[x.name]=y; return subst
+    if isinstance(y,Var): subst[y.name]=x; return subst
+    if isinstance(x,Atom) and isinstance(y,Atom): return subst if x==y else None
+    if isinstance(x,Compound) and isinstance(y,Compound):
+        if x.functor!=y.functor or len(x.args)!=len(y.args): return None
+        for a,b in zip(x.args,y.args):
             subst=unify(a,b,subst)
             if subst is None: return None
         return subst
     return None
-def deref(t,subst):
-    while t[0]=="var" and t[1] in subst: t=subst[t[1]]
-    if isinstance(t[1],list): return (t[0],[deref(a,subst) for a in t[1]])
-    return t
-def query(db,goals,subst={}):
-    if not goals: yield subst; return
+def walk(x, subst):
+    while isinstance(x,Var) and x.name in subst: x=subst[x.name]
+    return x
+def solve(goals, clauses, subst, depth=0):
+    if depth>50: return
+    if not goals: yield dict(subst); return
     goal=goals[0]; rest=goals[1:]
-    for head,body in db:
-        s=unify(goal,rename(head,{}),dict(subst))
+    for clause in clauses:
+        c=rename_vars(clause, depth)
+        s=unify(goal, c.head, dict(subst))
         if s is not None:
-            new_goals=[rename(b,{}) for b in body]+rest
-            yield from query(db,new_goals,s)
-_cnt=[0]
-def rename(t,mapping):
-    if t[0]=="var":
-        if t[1] not in mapping: _cnt[0]+=1; mapping[t[1]]=("var",f"_{_cnt[0]}")
-        return mapping[t[1]]
-    if isinstance(t[1],list): return (t[0],[rename(a,mapping) for a in t[1]])
-    return t
+            new_goals=c.body+rest
+            yield from solve(new_goals, clauses, s, depth+1)
+_counter=[0]
+def rename_vars(clause, depth):
+    mapping={}
+    def rename(term):
+        if isinstance(term,Var):
+            if term.name not in mapping: mapping[term.name]=Var(f"{term.name}_{depth}")
+            return mapping[term.name]
+        if isinstance(term,Compound): return Compound(term.functor,[rename(a) for a in term.args])
+        return term
+    return Clause(rename(clause.head),[rename(g) for g in clause.body])
 if __name__=="__main__":
-    db=[(parse_term("parent(tom,bob)"),[]),(parse_term("parent(tom,liz)"),[]),(parse_term("parent(bob,ann)"),[]),(parse_term("parent(bob,pat)"),[]),(parse_term("grandparent(X,Z)"),[parse_term("parent(X,Y)"),parse_term("parent(Y,Z)")])]
-    g=[parse_term("grandparent(tom,W)")]
-    results=[]
-    for s in query(db,g):
-        w=deref(("var","W"),s); results.append(w)
-    print(f"Grandchildren of tom: {[r[1] for r in results]}")
-    assert len(results)==2; print("Prolog mini OK")
+    # parent(tom, bob). parent(bob, ann).
+    clauses=[
+        Clause(Compound("parent",[Atom("tom"),Atom("bob")])),
+        Clause(Compound("parent",[Atom("bob"),Atom("ann")])),
+        Clause(Compound("parent",[Atom("bob"),Atom("pat")])),
+        Clause(Compound("grandparent",[Var("X"),Var("Z")]),
+               [Compound("parent",[Var("X"),Var("Y")]),Compound("parent",[Var("Y"),Var("Z")])]),
+    ]
+    goal=[Compound("grandparent",[Atom("tom"),Var("W")])]
+    print("Query: grandparent(tom, W)?")
+    for s in solve(goal, clauses, {}):
+        w=walk(Var("W"),s)
+        print(f"  W = {w}")
