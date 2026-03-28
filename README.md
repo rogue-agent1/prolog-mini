@@ -1,11 +1,13 @@
-# prolog-mini
+# Prolog Mini
 
-Minimal Prolog-like logic engine.""".
-
-Zero dependencies. Python 3.8+.
+Minimal Prolog interpreter (unification + backtracking).
 
 ## Usage
 
 ```bash
-python3 prolog_mini.py --help
+python3 prolog_mini.py
 ```
+
+## License
+
+MIT
